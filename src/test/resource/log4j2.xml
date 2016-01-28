@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<configuration status="OFF">
+    <Properties>
+        <property name="log_pattern">%d{yyyy-MM-dd HH:mm:ss z} %-5level %t %class{36}%L%M - %msg%xEx%n</property>
+    </Properties>
+    <appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <ThresholdFilter level="info" onMatch="ACCEPT" onMismatch="DENY" />
+            <PatternLayout pattern="${log_pattern}"/>
+        </Console>
+    </appenders>
+
+    <loggers>
+        <root level="info">
+            <appender-ref ref="Console"/>
+        </root>
+    </loggers>
+</configuration>
