@@ -6,7 +6,12 @@ import com.jinfuzi.fund.jobqueue.jobstore.JobStoreFactory;
 import net.greghaines.jesque.Job;
 import net.greghaines.jesque.client.Client;
 import net.greghaines.jesque.json.ObjectMapperFactory;
+import net.greghaines.jesque.utils.JedisUtils;
 import net.greghaines.jesque.utils.JesqueUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Transaction;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -19,6 +24,8 @@ import static net.greghaines.jesque.utils.ResqueConstants.QUEUES;
  * Created by kevinhe on 16/1/27.
  */
 public class JobStoreClientImpl implements Client {
+    private Logger logger = LoggerFactory.getLogger(JobStoreClientImpl.class);
+
     public static final boolean DEFAULT_CHECK_CONNECTION_BEFORE_USE = false;
 
     private JobStoreConfig jobStoreConfig;
@@ -196,19 +203,124 @@ public class JobStoreClientImpl implements Client {
         return false;
     }
 
-    public void delayedEnqueue(String s, Job job, long l) {
-
+    public void delayedEnqueue(String queue, Job job, long future) {
+        validateArguments(queue, job, future);
+        try {
+            doDelayedEnqueue(queue, ObjectMapperFactory.get().writeValueAsString(job), future);
+        } catch (RuntimeException re) {
+            throw re;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
-    public void removeDelayedEnqueue(String s, Job job) {
-
+    protected void doDelayedEnqueue(final String queue, final String msg, final long future) throws Exception {
+        this.jobStore.ensureConnection();
+        doDelayedEnqueue(this.jobStore, this.jobStore.getNameSpace(), queue, msg, future);
     }
 
-    public void recurringEnqueue(String s, Job job, long l, long l1) {
-
+    public static void doDelayedEnqueue(final JobStore jobStore, final String namespace, final String queue, final String jobJson, final long future) {
+        final String key = JesqueUtils.createKey(namespace, QUEUE, queue);
+        // Add task only if this queue is either delayed or unused
+        if (jobStore.canUseAsDelayedQueue(key)) {
+            jobStore.addToSortedSet(key, future, jobJson);
+            jobStore.addToSet(JesqueUtils.createKey(namespace, QUEUES), queue);
+        } else {
+            throw new IllegalArgumentException(queue + " cannot be used as a delayed queue");
+        }
     }
 
-    public void removeRecurringEnqueue(String s, Job job) {
+    public void removeDelayedEnqueue(String queue, Job job) {
+        validateArguments(queue, job);
+        try {
+            doRemoveDelayedEnqueue(queue, ObjectMapperFactory.get().writeValueAsString(job));
+        } catch (RuntimeException re) {
+            throw re;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
 
+    protected void doRemoveDelayedEnqueue(final String queue, final String msg) throws Exception {
+        this.jobStore.ensureConnection();
+        doRemoveDelayedEnqueue(this.jobStore, this.jobStore.getNameSpace(), queue, msg);
+    }
+
+    public static void doRemoveDelayedEnqueue(final JobStore jobStore, final String namespace, final String queue, final String jobJson) {
+        final String key = JesqueUtils.createKey(namespace, QUEUE, queue);
+        // remove task only if this queue is either delayed or unused
+        if (jobStore.canUseAsDelayedQueue(key)) {
+            jobStore.removeFromSortedSet(key, jobJson);
+        } else {
+            throw new IllegalArgumentException(queue + " cannot be used as a delayed queue");
+        }
+    }
+
+    public void recurringEnqueue(String queue, Job job, long future, long frequency) {
+        validateArguments(queue, job, future, frequency);
+        try {
+            doRecurringEnqueue(queue, ObjectMapperFactory.get().writeValueAsString(job), future, frequency);
+        } catch (RuntimeException re) {
+            throw re;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    protected void doRecurringEnqueue(final String queue, final String msg, final long future, final long frequency) throws Exception{
+        this.jobStore.ensureConnection();
+        doRecurringEnqueue(this.jobStore, this.jobStore.getNameSpace(), queue, msg, future, frequency);
+    }
+
+    public static void doRecurringEnqueue(final JobStore jobStore, final String namespace, final String queue, final String jobJson, final long future, final long frequency){
+        final String queueKey = JesqueUtils.createKey(namespace, QUEUE, queue);
+        final String hashKey = JesqueUtils.createRecurringHashKey(queueKey);
+
+        if (jobStore.canUseAsRecurringQueue(queueKey, hashKey)) {
+            jobStore.addRecurringJob(queueKey, future, hashKey, jobJson, frequency);
+        } else {
+            throw new IllegalArgumentException(queue + " cannot be used as a recurring queue");
+        }
+    }
+
+    public void removeRecurringEnqueue(String queue, Job job) {
+        validateArguments(queue, job);
+        try {
+            doRemoveRecurringEnqueue(queue, ObjectMapperFactory.get().writeValueAsString(job));
+        } catch (RuntimeException re) {
+            throw re;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    protected void doRemoveRecurringEnqueue(final String queue, final String msg) throws Exception{
+        this.jobStore.ensureConnection();
+        doRemoveRecurringEnqueue(this.jobStore, this.jobStore.getNameSpace(), queue, msg);
+    }
+
+    public void doRemoveRecurringEnqueue(final JobStore jobStore, final String namespace, final String queue, final String jobJson) {
+        final String queueKey = JesqueUtils.createKey(namespace, QUEUE, queue);
+        final String hashKey = JesqueUtils.createRecurringHashKey(queueKey);
+
+        if (jobStore.canUseAsRecurringQueue(queueKey, hashKey)) {
+            jobStore.removeRecurringJob(queueKey, hashKey, jobJson);
+        } else {
+            throw new IllegalArgumentException(queue + " cannot be used as a recurring queue");
+        }
+    }
+
+    private void validateArguments(final String queue, final Job job, final long future) {
+        validateArguments(queue, job);
+        if (System.currentTimeMillis() > future) {
+            throw new IllegalArgumentException("future must be after current time");
+        }
+    }
+
+    private void validateArguments(final String queue, final Job job, final long future, final long frequency) {
+        validateArguments(queue, job, future);
+        if (frequency < 1) {
+            throw new IllegalArgumentException("frequency must be greater than one second");
+        }
     }
 }

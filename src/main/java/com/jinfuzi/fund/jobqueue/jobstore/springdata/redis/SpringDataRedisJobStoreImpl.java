@@ -1,13 +1,17 @@
-package com.jinfuzi.fund.jobqueue.jobstore.springdata;
+package com.jinfuzi.fund.jobqueue.jobstore.springdata.redis;
 
 import com.jinfuzi.fund.jobqueue.jobstore.JobStore;
 import net.greghaines.jesque.utils.ScriptUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.connection.DataType;
+import org.springframework.data.redis.connection.DefaultTuple;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 import java.util.*;
@@ -90,6 +94,13 @@ public class SpringDataRedisJobStoreImpl implements JobStore {
     }
 
     @Override
+    public boolean canUseAsDelayedQueue(String key) {
+        DataType type = this.redisTemplate.type(key);
+        return type == DataType.SET ||
+                type == DataType.NONE;
+    }
+
+    @Override
     public Long rightPush(String key, String... strings) {
         return (Long) this.redisTemplate.execute(new RedisCallback() {
             @Override
@@ -107,12 +118,16 @@ public class SpringDataRedisJobStoreImpl implements JobStore {
 
     @Override
     public String leftPop(String key) {
-        return new String((byte[]) this.redisTemplate.execute(new RedisCallback() {
+        byte[] value = (byte[]) this.redisTemplate.execute(new RedisCallback() {
             @Override
             public byte[] doInRedis(RedisConnection redisConnection) throws DataAccessException {
                 return redisConnection.lPop(key.getBytes());
             }
-        }));
+        });
+        if (value != null) {
+            return new String(value);
+        }
+        return null;
     }
 
     @Override
@@ -132,6 +147,17 @@ public class SpringDataRedisJobStoreImpl implements JobStore {
     }
 
     @Override
+    public Long addToSortedSet(String key, double score, String member) {
+        return (Long) this.redisTemplate.execute(new RedisCallback() {
+            @Override
+            public Long doInRedis(RedisConnection redisConnection) throws DataAccessException {
+                return redisConnection.zAdd(key.getBytes(),
+                        Collections.singleton(new DefaultTuple(member.getBytes(), score)));
+            }
+        });
+    }
+
+    @Override
     public Long removeFromSet(String key, String... members) {
         return (Long) this.redisTemplate.execute(new RedisCallback() {
             @Override
@@ -143,6 +169,16 @@ public class SpringDataRedisJobStoreImpl implements JobStore {
                                 map(member -> member.getBytes()).
                                 collect(Collectors.toList()).
                                 toArray(membersInByte));
+            }
+        });
+    }
+
+    @Override
+    public Long removeFromSortedSet(String key, String value) {
+        return (Long) this.redisTemplate.execute(new RedisCallback() {
+            @Override
+            public Long doInRedis(RedisConnection redisConnection) throws DataAccessException {
+                return redisConnection.zRem(key.getBytes(), value.getBytes());
             }
         });
     }
@@ -221,7 +257,7 @@ public class SpringDataRedisJobStoreImpl implements JobStore {
 
     @Override
     public String set(String key, String value) {
-        return (String)this.redisTemplate.execute(new RedisCallback() {
+        return (String) this.redisTemplate.execute(new RedisCallback() {
             @Override
             public Void doInRedis(RedisConnection redisConnection) throws DataAccessException {
                 redisConnection.set(key.getBytes(), value.getBytes());
@@ -250,7 +286,7 @@ public class SpringDataRedisJobStoreImpl implements JobStore {
     }
 
     public Set<byte[]> memberOfSet(final byte[] key) {
-        return (Set<byte[]>)this.redisTemplate.execute(new RedisCallback() {
+        return (Set<byte[]>) this.redisTemplate.execute(new RedisCallback() {
             @Override
             public Set<byte[]> doInRedis(RedisConnection redisConnection) throws DataAccessException {
                 return redisConnection.sMembers(key);
@@ -275,5 +311,60 @@ public class SpringDataRedisJobStoreImpl implements JobStore {
         keys.add(freqKey);
         return (String) this.redisTemplate.execute(this.popScriptHash.get(),
                 keys, now);
+    }
+
+    @Override
+    public boolean canUseAsRecurringQueue(String queueKey, String hashKey) {
+        final DataType hashType = this.redisTemplate.type(hashKey);
+        return (DataType.HASH == hashType || DataType.NONE == hashType)
+                && canUseAsDelayedQueue(queueKey);
+    }
+
+    @Override
+    public void addRecurringJob(String queueKey, long future, String hashKey, String jobJson, long frequency) {
+        this.redisTemplate.execute(
+                new SessionCallback() {
+                    @Override
+                    public Void execute(RedisOperations redisOperations) throws DataAccessException {
+                        redisOperations.multi();
+                        redisOperations.execute(new RedisCallback() {
+                            @Override
+                            public Void doInRedis(RedisConnection redisConnection) throws DataAccessException {
+                                redisConnection.zAdd(queueKey.getBytes(), future, jobJson.getBytes());
+                                redisConnection.hSet(hashKey.getBytes(), jobJson.getBytes(), String.valueOf(frequency).getBytes());
+                                return null;
+                            }
+                        });
+                        if (null == redisOperations.exec()) {
+                            throw new RuntimeException("cannot add " + jobJson + " to recurring queue");
+                        }
+                        return null;
+                    }
+                }
+        );
+    }
+
+    @Override
+    public void removeRecurringJob(String queueKey, String hashKey, String jobJson) {
+        this.redisTemplate.execute(
+                new SessionCallback() {
+                    @Override
+                    public Void execute(RedisOperations redisOperations) throws DataAccessException {
+                        redisOperations.multi();
+                        redisOperations.execute(new RedisCallback() {
+                            @Override
+                            public Void doInRedis(RedisConnection redisConnection) throws DataAccessException {
+                                redisConnection.hDel(hashKey.getBytes(), jobJson.getBytes());
+                                redisConnection.zRem(queueKey.getBytes(), jobJson.getBytes());
+                                return null;
+                            }
+                        });
+                        if (null == redisOperations.exec()) {
+                            throw new RuntimeException("cannot add " + jobJson + " to recurring queue");
+                        }
+                        return null;
+                    }
+                }
+        );
     }
 }

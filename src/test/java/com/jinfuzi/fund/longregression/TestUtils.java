@@ -106,6 +106,30 @@ public final class TestUtils {
         }
     }
 
+    public static void recurringEnqueueJobs(final String queue, final List<Job> jobs, final Config config) {
+        final Client client = new ClientImpl(config);
+        try {
+            int i = 1;
+            for (final Job job : jobs) {
+                final long value = System.currentTimeMillis() + (500 * i++);
+                client.recurringEnqueue(queue, job, value, 1000);
+            }
+        } finally {
+            client.end();
+        }
+    }
+
+    public static void removeRecurringEnqueueJobs(final String queue, final List<Job> jobs, final Config config) {
+        final Client client = new ClientImpl(config);
+        try {
+            for (final Job job : jobs) {
+                client.removeRecurringEnqueue(queue, job);
+            }
+        } finally {
+            client.end();
+        }
+    }
+
     public static void assertFullyEquals(final Object obj1, final Object obj2) {
         Assert.assertEquals(obj1, obj2);
         Assert.assertEquals(obj1.hashCode(), obj2.hashCode());

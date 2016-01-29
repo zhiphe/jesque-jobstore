@@ -3,9 +3,7 @@ package com.jinfuzi.fund.longregression;
 import net.greghaines.jesque.Config;
 import net.greghaines.jesque.ConfigBuilder;
 import net.greghaines.jesque.Job;
-import net.greghaines.jesque.worker.MapBasedJobFactory;
-import net.greghaines.jesque.worker.Worker;
-import net.greghaines.jesque.worker.WorkerImpl;
+import net.greghaines.jesque.worker.*;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -63,6 +61,50 @@ public class QueueTest {
             Assert.assertEquals(Long.valueOf(0), jedis.llen(createKey(config.getNamespace(), QUEUE, testQueue)));
         } finally {
             jedis.quit();
+        }
+    }
+
+    @Test
+    public void test_workerpool() throws Exception {
+        // Enqueue the job before worker is created and started
+        final Job job = new Job("TestAction", new Object[] { 1, 2.3, true, "test", Arrays.asList("inner", 4.5) });
+        TestUtils.enqueueJobs(testQueue, Arrays.asList(job), config);
+        TestUtils.enqueueJobs(testQueue, Arrays.asList(job), config);
+        TestUtils.enqueueJobs(testQueue, Arrays.asList(job), config);
+        TestUtils.enqueueJobs(testQueue, Arrays.asList(job), config);
+
+        final WorkerPool workerPool = new WorkerPool(
+                new WorkerImplFactory(
+                        config,
+                        Arrays.asList(testQueue),
+                        new MapBasedJobFactory(map(entry("TestAction", TestAction.class)))),
+                3
+        );
+        final Thread workerThread = new Thread(workerPool);
+        workerThread.start();
+        try { // Wait a bit to ensure the worker had time to process the job
+            Thread.sleep(500);
+        } finally { // Stop the worker
+            TestUtils.stopWorker(workerPool, workerThread);
+        }
+    }
+
+    @Test
+    public void test_recurringjob() throws Exception {
+        // Enqueue the job before worker is created and started
+        final Job job = new Job("TestAction", new Object[] { 1, 2.3, true, "test", Arrays.asList("inner", 4.5) });
+        TestUtils.recurringEnqueueJobs(testQueue, Arrays.asList(job), config);
+        Jedis jedis = createJedis(config);
+
+        // Create and start worker
+        final Worker worker = new WorkerImpl(config, Arrays.asList(testQueue),
+                new MapBasedJobFactory(map(entry("TestAction", TestAction.class))));
+        final Thread workerThread = new Thread(worker);
+        workerThread.start();
+        try { // Wait a bit to ensure the worker had time to process the job
+            Thread.sleep(20000);
+        } finally { // Stop the worker
+            TestUtils.stopWorker(worker, workerThread);
         }
     }
 }

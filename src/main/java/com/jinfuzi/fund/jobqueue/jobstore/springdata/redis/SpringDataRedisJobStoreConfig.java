@@ -1,4 +1,4 @@
-package com.jinfuzi.fund.jobqueue.jobstore.springdata;
+package com.jinfuzi.fund.jobqueue.jobstore.springdata.redis;
 
 import com.jinfuzi.fund.jobqueue.jobstore.JobStoreConfig;
 

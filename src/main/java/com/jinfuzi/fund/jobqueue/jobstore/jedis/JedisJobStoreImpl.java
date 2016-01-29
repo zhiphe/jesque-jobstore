@@ -1,10 +1,12 @@
 package com.jinfuzi.fund.jobqueue.jobstore.jedis;
 
 import com.jinfuzi.fund.jobqueue.jobstore.JobStore;
+import net.greghaines.jesque.utils.JedisUtils;
 import net.greghaines.jesque.utils.ScriptUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Transaction;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 
 import java.util.Set;
@@ -111,6 +113,11 @@ public class JedisJobStoreImpl implements JobStore {
     }
 
     @Override
+    public boolean canUseAsDelayedQueue(String key) {
+        return JedisUtils.canUseAsDelayedQueue(this.jedis, key);
+    }
+
+    @Override
     public Long rightPush(String key, String... strings) {
         return this.jedis.rpush(key, strings);
     }
@@ -126,8 +133,18 @@ public class JedisJobStoreImpl implements JobStore {
     }
 
     @Override
+    public Long addToSortedSet(String key, double score, String member) {
+        return this.jedis.zadd(key, score, member);
+    }
+
+    @Override
     public Long removeFromSet(String key, String... members) {
         return this.jedis.srem(key, members);
+    }
+
+    @Override
+    public Long removeFromSortedSet(String key, String value) {
+        return this.jedis.zrem(key, value);
     }
 
     @Override
@@ -189,5 +206,30 @@ public class JedisJobStoreImpl implements JobStore {
     public String pop(String queueKey, String inFlightKey, String freqKey, String now) {
         return (String) this.jedis.evalsha(this.popScriptHash.get(), 3, queueKey, inFlightKey, freqKey, now);
 
+    }
+
+    @Override
+    public boolean canUseAsRecurringQueue(String queueKey, String hashKey) {
+        return JedisUtils.canUseAsRecurringQueue(this.jedis, queueKey, hashKey);
+    }
+
+    @Override
+    public void addRecurringJob(String queueKey, long future, String hashKey, String jobJson, long frequency) {
+        Transaction transaction = jedis.multi();
+        transaction.zadd(queueKey, future, jobJson);
+        transaction.hset(hashKey, jobJson, String.valueOf(frequency));
+        if (transaction.exec() == null) {
+            throw new RuntimeException("cannot add " + jobJson + " to recurring queue");
+        }
+    }
+
+    @Override
+    public void removeRecurringJob(String queueKey, String hashKey, String jobJson) {
+        Transaction transaction = this.jedis.multi();
+        transaction.hdel(hashKey, jobJson);
+        transaction.zrem(queueKey, jobJson);
+        if (transaction.exec() == null) {
+            throw new RuntimeException("cannot remove " + jobJson + " from recurring queue");
+        }
     }
 }
