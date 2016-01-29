@@ -1,8 +1,8 @@
 package com.jinfuzi.fund.jobqueue.client;
 
 import com.jinfuzi.fund.jobqueue.jobstore.JobStore;
-import com.jinfuzi.fund.jobqueue.jobstore.JobStoreBuilder;
-import net.greghaines.jesque.Config;
+import com.jinfuzi.fund.jobqueue.jobstore.JobStoreConfig;
+import com.jinfuzi.fund.jobqueue.jobstore.JobStoreFactory;
 import net.greghaines.jesque.Job;
 import net.greghaines.jesque.client.Client;
 import net.greghaines.jesque.json.ObjectMapperFactory;
@@ -21,29 +21,28 @@ import static net.greghaines.jesque.utils.ResqueConstants.QUEUES;
 public class JobStoreClientImpl implements Client {
     public static final boolean DEFAULT_CHECK_CONNECTION_BEFORE_USE = false;
 
-    private Config config;
+    private JobStoreConfig jobStoreConfig;
     private JobStore jobStore;
     private boolean checkConnectionBeforeUse;
-    private String namespace;
     private ScheduledExecutorService keepAliveService = null;
 
-    public JobStoreClientImpl(final Config config) {
-        this(config, DEFAULT_CHECK_CONNECTION_BEFORE_USE);
+    public JobStoreClientImpl(final JobStoreConfig jobStoreConfig) {
+        this(jobStoreConfig, DEFAULT_CHECK_CONNECTION_BEFORE_USE);
     }
 
-    public JobStoreClientImpl(final Config config, final boolean checkConnectionBeforeUse) {
-        init(config);
-        this.config = config;
-        this.jobStore = JobStoreBuilder.buildJobStore(config);
+    public JobStoreClientImpl(final JobStoreConfig jobStoreConfig, final boolean checkConnectionBeforeUse) {
+        init(jobStoreConfig);
+        this.jobStoreConfig = jobStoreConfig;
+        this.jobStore = JobStoreFactory.buildJobStore(jobStoreConfig);
         authenticateAndSelectDB();
         this.checkConnectionBeforeUse = checkConnectionBeforeUse;
         this.keepAliveService = null;
     }
 
-    public JobStoreClientImpl(final Config config, final long initialDelay, final long period, final TimeUnit timeUnit) {
-        init(config);
-        this.config = config;
-        this.jobStore = JobStoreBuilder.buildJobStore(config);
+    public JobStoreClientImpl(final JobStoreConfig jobStoreConfig, final long initialDelay, final long period, final TimeUnit timeUnit) {
+        init(jobStoreConfig);
+        this.jobStoreConfig = jobStoreConfig;
+        this.jobStore = JobStoreFactory.buildJobStore(jobStoreConfig);
         authenticateAndSelectDB();
         this.checkConnectionBeforeUse = false;
         this.keepAliveService = Executors.newSingleThreadScheduledExecutor();
@@ -56,11 +55,10 @@ public class JobStoreClientImpl implements Client {
         }, initialDelay, period, timeUnit);
     }
 
-    protected void init(final Config config) {
-        if (config == null) {
+    protected void init(final JobStoreConfig jobStoreConfig) {
+        if (jobStoreConfig == null) {
             throw new IllegalArgumentException("config must not be null");
         }
-        this.namespace = config.getNamespace();
     }
 
     public void enqueue(String s, Job job) {
@@ -76,16 +74,12 @@ public class JobStoreClientImpl implements Client {
 
     protected void doEnqueue(final String queue, final String jobJson) {
         ensureConnection();
-        doEnqueue(this.jobStore, getNamespace(), queue, jobJson);
+        doEnqueue(this.jobStore, queue, jobJson);
     }
 
-    public static void doEnqueue(final JobStore jobStore, final String namespace, final String queue, final String jobJson) {
-        jobStore.addToSet(JesqueUtils.createKey(namespace, QUEUES), queue);
-        jobStore.rightPush(JesqueUtils.createKey(namespace, QUEUE, queue), jobJson);
-    }
-
-    protected String getNamespace() {
-        return this.namespace;
+    public static void doEnqueue(final JobStore jobStore, final String queue, final String jobJson) {
+        jobStore.addToSet(JesqueUtils.createKey(jobStore.getNameSpace(), QUEUES), queue);
+        jobStore.rightPush(JesqueUtils.createKey(jobStore.getNameSpace(), QUEUE, queue), jobJson);
     }
 
     private void ensureConnection() {
@@ -95,10 +89,8 @@ public class JobStoreClientImpl implements Client {
     }
 
     private void authenticateAndSelectDB() {
-        if (this.config.getPassword() != null) {
-            this.jobStore.authenticate(this.config.getPassword());
-        }
-        this.jobStore.select(this.config.getDatabase());
+        this.jobStore.authenticate();
+        this.jobStore.select();
     }
 
     private void validateArguments(final String queue, final Job job) {
@@ -146,11 +138,11 @@ public class JobStoreClientImpl implements Client {
 
     protected boolean doAcquireLock(final String lockName, final String lockHolder, final int timeout) throws Exception {
         ensureConnection();
-        return doAcquireLock(this.jobStore, getNamespace(), lockName, lockHolder, timeout);
+        return doAcquireLock(this.jobStore, lockName, lockHolder, timeout);
     }
 
-    public static boolean doAcquireLock(final JobStore jobStore, final String namespace, final String lockName, final String lockHolder, final int timeout) {
-        final String key = JesqueUtils.createKey(namespace, lockName);
+    public static boolean doAcquireLock(final JobStore jobStore, final String lockName, final String lockHolder, final int timeout) {
+        final String key = JesqueUtils.createKey(jobStore.getNameSpace(), lockName);
         // If lock already exists, extend it
         String existingLockHolder = jobStore.get(key);
         if ((existingLockHolder != null) && existingLockHolder.equals(lockHolder)) {

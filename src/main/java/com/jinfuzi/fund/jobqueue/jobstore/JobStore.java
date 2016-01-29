@@ -6,12 +6,13 @@ import java.util.Set;
  * Created by kevinhe on 16/1/27.
  */
 public interface JobStore {
+    String getNameSpace();
     void initialize() throws Exception;
     boolean ensureConnection();
     String disconnect();
     boolean reconnect(final int reconAttempts, final long reconnectSleepTime);
-    String authenticate(String password);
-    String select(int index);
+    String authenticate();
+    String select();
     Long rightPush(String key, String... strings);
     String leftPop(String key);
     Long addToSet(String key, String... members);

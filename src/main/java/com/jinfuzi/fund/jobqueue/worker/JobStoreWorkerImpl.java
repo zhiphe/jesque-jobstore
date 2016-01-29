@@ -3,8 +3,8 @@ package com.jinfuzi.fund.jobqueue.worker;
 import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.jinfuzi.fund.jobqueue.jobstore.JobStore;
-import com.jinfuzi.fund.jobqueue.jobstore.JobStoreBuilder;
-import net.greghaines.jesque.Config;
+import com.jinfuzi.fund.jobqueue.jobstore.JobStoreConfig;
+import com.jinfuzi.fund.jobqueue.jobstore.JobStoreFactory;
 import net.greghaines.jesque.Job;
 import net.greghaines.jesque.JobFailure;
 import net.greghaines.jesque.WorkerStatus;
@@ -48,10 +48,8 @@ public class JobStoreWorkerImpl implements Worker {
 
     private static volatile boolean threadNameChangingEnabled = false;
 
-    protected final Config config;
     private JobStore jobStore;
     private final String name;
-    protected final String namespace;
     private final long workerId = WORKER_COUNTER.getAndIncrement();
     protected final WorkerListenerDelegate listenerDelegate = new WorkerListenerDelegate();
     protected final AtomicReference<State> state = new AtomicReference<State>(NEW);
@@ -67,13 +65,13 @@ public class JobStoreWorkerImpl implements Worker {
     private final String threadNameBase = "Worker-" + this.workerId + " Jesque-" + VersionUtils.getVersion() + ": ";
 
 
-    public JobStoreWorkerImpl(final Config config, final Collection<String> queues, final JobFactory jobFactory) {
-        this(config, queues, jobFactory, JobStoreBuilder.buildJobStore(config));
+    public JobStoreWorkerImpl(final JobStoreConfig jobStoreConfig, final Collection<String> queues, final JobFactory jobFactory) {
+        this(jobStoreConfig, queues, jobFactory, JobStoreFactory.buildJobStore(jobStoreConfig));
     }
 
-    public JobStoreWorkerImpl(final Config config, final Collection<String> queues, final JobFactory jobFactory,
+    public JobStoreWorkerImpl(final JobStoreConfig jobStoreConfig, final Collection<String> queues, final JobFactory jobFactory,
                               final JobStore jobStore) {
-        if (config == null) {
+        if (jobStoreConfig == null) {
             throw new IllegalArgumentException("config must not be null");
         }
         if (jobFactory == null) {
@@ -83,12 +81,10 @@ public class JobStoreWorkerImpl implements Worker {
             throw new IllegalArgumentException("jobStore must not be null");
         }
         checkQueues(queues);
-        this.config = config;
         this.jobFactory = jobFactory;
-        this.namespace = config.getNamespace();
         this.jobStore = jobStore;
         this.failQueueStrategyRef = new AtomicReference<FailQueueStrategy>(
-                new DefaultFailQueueStrategy(this.namespace));
+                new DefaultFailQueueStrategy(jobStore.getNameSpace()));
         authenticateAndSelectDB();
         setQueues(queues);
         this.name = createName();
@@ -162,7 +158,7 @@ public class JobStoreWorkerImpl implements Worker {
     }
 
     protected String key(final String... parts) {
-        return JesqueUtils.createKey(this.namespace, parts);
+        return JesqueUtils.createKey(this.jobStore.getNameSpace(), parts);
     }
 
     protected void checkQueues(final Iterable<String> queues) {
@@ -334,10 +330,8 @@ public class JobStoreWorkerImpl implements Worker {
     }
 
     private void authenticateAndSelectDB() {
-        if (this.config.getPassword() != null) {
-            this.jobStore.authenticate(this.config.getPassword());
-        }
-        this.jobStore.select(this.config.getDatabase());
+        this.jobStore.authenticate();
+        this.jobStore.select();
     }
 
     protected int getReconnectAttempts() {

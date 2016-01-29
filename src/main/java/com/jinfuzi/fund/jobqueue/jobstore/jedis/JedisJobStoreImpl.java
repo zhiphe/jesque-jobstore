@@ -1,19 +1,14 @@
-package com.jinfuzi.fund.jobqueue.jobstore;
+package com.jinfuzi.fund.jobqueue.jobstore.jedis;
 
-import net.greghaines.jesque.utils.JesqueUtils;
+import com.jinfuzi.fund.jobqueue.jobstore.JobStore;
 import net.greghaines.jesque.utils.ScriptUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 
-import java.io.IOException;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
-
-import static net.greghaines.jesque.utils.ResqueConstants.*;
-import static net.greghaines.jesque.worker.WorkerEvent.WORKER_ERROR;
-import static net.greghaines.jesque.worker.WorkerEvent.WORKER_STOP;
 
 /**
  * Created by kevinhe on 16/1/28.
@@ -22,12 +17,19 @@ public class JedisJobStoreImpl implements JobStore {
     private Logger logger = LoggerFactory.getLogger(JedisJobStoreImpl.class);
     public static final String PONG = "PONG";
 
+    private JedisJobStoreConfig jedisJobStoreConfig;
     private Jedis jedis;
     private final AtomicReference<String> popScriptHash = new AtomicReference<>(null);
     private final AtomicReference<String> lpoplpushScriptHash = new AtomicReference<>(null);
 
-    public JedisJobStoreImpl(Jedis jedis) {
-        this.jedis = jedis;
+    public JedisJobStoreImpl(JedisJobStoreConfig jedisJobStoreConfig) {
+        this.jedisJobStoreConfig = jedisJobStoreConfig;
+        this.jedis = new Jedis(jedisJobStoreConfig.getHost(), jedisJobStoreConfig.getPort());
+    }
+
+    @Override
+    public String getNameSpace() {
+        return jedisJobStoreConfig.getNamespace();
     }
 
     @Override
@@ -96,13 +98,16 @@ public class JedisJobStoreImpl implements JobStore {
     }
 
     @Override
-    public String authenticate(String password) {
-        return this.jedis.auth(password);
+    public String authenticate() {
+        if (jedisJobStoreConfig.getPassword() != null) {
+            return this.jedis.auth(jedisJobStoreConfig.getPassword());
+        }
+        return null;
     }
 
     @Override
-    public String select(int index) {
-        return this.jedis.select(index);
+    public String select() {
+        return this.jedis.select(jedisJobStoreConfig.getDatabase());
     }
 
     @Override

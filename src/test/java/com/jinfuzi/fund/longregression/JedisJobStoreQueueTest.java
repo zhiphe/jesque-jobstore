@@ -1,7 +1,7 @@
 package com.jinfuzi.fund.longregression;
 
 import com.jinfuzi.fund.jobqueue.client.JobStoreClientImpl;
-import com.jinfuzi.fund.jobqueue.jobstore.JedisJobStoreConfig;
+import com.jinfuzi.fund.jobqueue.jobstore.jedis.JedisJobStoreConfig;
 import com.jinfuzi.fund.jobqueue.worker.JobStoreWorkerImpl;
 import net.greghaines.jesque.Config;
 import net.greghaines.jesque.ConfigBuilder;
@@ -20,7 +20,7 @@ import static net.greghaines.jesque.utils.JesqueUtils.map;
 /**
  * Created by kevinhe on 16/1/28.
  */
-public class JobStoreQueueTest {
+public class JedisJobStoreQueueTest {
     private static final Config config = new ConfigBuilder().build();
     private static final String testQueue = "foo";
 
@@ -30,17 +30,21 @@ public class JobStoreQueueTest {
     }
 
     @Test
-    public void issue18() throws Exception {
+    public void test_simplequeue() throws Exception {
         // Enqueue the job before worker is created and started
         final Job job = new Job("TestAction", new Object[]{1, 2.3, true, "test", Arrays.asList("inner", 4.5)});
-        final Client client = new JobStoreClientImpl(new JedisJobStoreConfig(config));
+        final Client client = new JobStoreClientImpl(new JedisJobStoreConfig(
+                "localhost", 6379, "jobstore", null, 0
+        ));
         try {
             client.enqueue(testQueue, job);
         } finally {
             client.end();
         }
         // Create and start worker
-        final Worker worker = new JobStoreWorkerImpl(new JedisJobStoreConfig(config), Arrays.asList(testQueue),
+        final Worker worker = new JobStoreWorkerImpl(new JedisJobStoreConfig(
+                "localhost", 6379, "jobstore", null, 0
+        ), Arrays.asList(testQueue),
                 new MapBasedJobFactory(map(entry("TestAction", TestAction.class))));
         final Thread workerThread = new Thread(worker);
         workerThread.start();
