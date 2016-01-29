@@ -1,15 +1,14 @@
 package com.jinfuzi.fund.longregression;
 
+import com.jinfuzi.fund.jobqueue.client.Client;
 import com.jinfuzi.fund.jobqueue.client.JobStoreClientImpl;
+import com.jinfuzi.fund.jobqueue.jobstore.Job;
+import com.jinfuzi.fund.jobqueue.jobstore.MapBasedJobProcessorFactory;
 import com.jinfuzi.fund.jobqueue.jobstore.jedis.JedisJobStoreConfig;
 import com.jinfuzi.fund.jobqueue.worker.JobStoreWorkerImpl;
+import com.jinfuzi.fund.jobqueue.worker.Worker;
 import net.greghaines.jesque.Config;
 import net.greghaines.jesque.ConfigBuilder;
-import net.greghaines.jesque.Job;
-import net.greghaines.jesque.client.Client;
-import net.greghaines.jesque.worker.MapBasedJobFactory;
-import net.greghaines.jesque.worker.Worker;
-import net.greghaines.jesque.worker.WorkerPool;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -33,7 +32,7 @@ public class JedisJobStoreQueueTest {
     @Test
     public void test_simplequeue() throws Exception {
         // Enqueue the job before worker is created and started
-        final Job job = new Job("TestAction", new Object[]{1, 2.3, true, "test", Arrays.asList("inner", 4.5)});
+        final Job job = new TestJob("Hello World");
         final Client client = new JobStoreClientImpl(new JedisJobStoreConfig(
                 "localhost", 6379, "simplequeue-jedisjobstore", null, 0
         ));
@@ -46,7 +45,7 @@ public class JedisJobStoreQueueTest {
         final Worker worker = new JobStoreWorkerImpl(new JedisJobStoreConfig(
                 "localhost", 6379, "simplequeue-jedisjobstore", null, 0
         ), Arrays.asList(testQueue),
-                new MapBasedJobFactory(map(entry("TestAction", TestAction.class))));
+                new MapBasedJobProcessorFactory(map(entry(TestJob.class.getName(), TestJobProcessor.class))));
         final Thread workerThread = new Thread(worker);
         workerThread.start();
         try { // Wait a bit to ensure the worker had time to process the job
@@ -59,7 +58,6 @@ public class JedisJobStoreQueueTest {
     @Test
     public void test_simplequeue_multiworkers() throws Exception {
         // Enqueue the job before worker is created and started
-        final Job job = new Job("TestAction", new Object[]{1, 2.3, true, "test", Arrays.asList("inner", 4.5)});
         final Client client = new JobStoreClientImpl(new JedisJobStoreConfig(
                 "localhost", 6379, "simplequeue-jedisjobstore-multiworkers", null, 0
         ));
@@ -67,20 +65,20 @@ public class JedisJobStoreQueueTest {
         final Worker worker = new JobStoreWorkerImpl(new JedisJobStoreConfig(
                 "localhost", 6379, "simplequeue-jedisjobstore-multiworkers", null, 0
         ), Arrays.asList(testQueue),
-                new MapBasedJobFactory(map(entry("TestAction", TestAction.class))));
+                new MapBasedJobProcessorFactory(map(entry(TestJob.class.getName(), TestJobProcessor.class))));
         final Thread workerThread = new Thread(worker);
         workerThread.start();
         final Worker worker1 = new JobStoreWorkerImpl(new JedisJobStoreConfig(
                 "localhost", 6379, "simplequeue-jedisjobstore-multiworkers", null, 0
         ), Arrays.asList(testQueue),
-                new MapBasedJobFactory(map(entry("TestAction", TestAction.class))));
+                new MapBasedJobProcessorFactory(map(entry(TestJob.class.getName(), TestJobProcessor.class))));
         final Thread workerThread1 = new Thread(worker1);
         workerThread1.start();
 
         try {
-            client.enqueue(testQueue, job);
-            client.enqueue(testQueue, job);
-            client.enqueue(testQueue, job);
+            client.enqueue(testQueue, new TestJob("Hello World"));
+            client.enqueue(testQueue, new TestJob("Hello Kevin"));
+            client.enqueue(testQueue, new TestJob("Hello Turkey"));
         } finally {
             client.end();
         }
@@ -95,14 +93,12 @@ public class JedisJobStoreQueueTest {
     @Test
     public void test_delayqueue() throws Exception {
         // Enqueue the job before worker is created and started
-        final Job job = new Job("TestAction",
-                new Object[]{1, 2.3, true, "test", Arrays.asList("inner", 4.5)});
         final Client client = new JobStoreClientImpl(new JedisJobStoreConfig(
                 "localhost", 6379, "delayqueue-jedisjobstore", null, 0
         ));
         final long future = System.currentTimeMillis() + 10 * 1000;
         try {
-            client.delayedEnqueue(testQueue, job, future);
+            client.delayedEnqueue(testQueue, new TestJob("Hello World"), future);
         } finally {
             client.end();
         }
@@ -110,7 +106,7 @@ public class JedisJobStoreQueueTest {
         final Worker worker = new JobStoreWorkerImpl(new JedisJobStoreConfig(
                 "localhost", 6379, "delayqueue-jedisjobstore", null, 0
         ), Arrays.asList(testQueue),
-                new MapBasedJobFactory(map(entry("TestAction", TestAction.class))));
+                new MapBasedJobProcessorFactory(map(entry(TestJob.class.getName(), TestJobProcessor.class))));
         final Thread workerThread = new Thread(worker);
         workerThread.start();
         try { // Wait a bit to ensure the worker had time to process the job
@@ -123,15 +119,13 @@ public class JedisJobStoreQueueTest {
     @Test
     public void test_recurringqueue() throws Exception {
         // Enqueue the job before worker is created and started
-        final Job job = new Job("TestAction",
-                new Object[]{1, 2.3, true, "test", Arrays.asList("inner", 4.5)});
         final Client client = new JobStoreClientImpl(new JedisJobStoreConfig(
                 "localhost", 6379, "recurringqueue-jedisjobstore", null, 0
         ));
         final long future = System.currentTimeMillis() + 1 * 1000;
         final long frequency = 1000;
         try {
-            client.recurringEnqueue(testQueue, job, future, frequency);
+            client.recurringEnqueue(testQueue, new TestJob("Hello World"), future, frequency);
         } finally {
             client.end();
         }
@@ -139,7 +133,7 @@ public class JedisJobStoreQueueTest {
         final Worker worker = new JobStoreWorkerImpl(new JedisJobStoreConfig(
                 "localhost", 6379, "recurringqueue-jedisjobstore", null, 0
         ), Arrays.asList(testQueue),
-                new MapBasedJobFactory(map(entry("TestAction", TestAction.class))));
+                new MapBasedJobProcessorFactory(map(entry(TestJob.class.getName(), TestJobProcessor.class))));
         final Thread workerThread = new Thread(worker);
         workerThread.start();
         try { // Wait a bit to ensure the worker had time to process the job

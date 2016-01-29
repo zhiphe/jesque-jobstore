@@ -1,7 +1,7 @@
 package com.jinfuzi.fund.jobqueue.worker;
 
+import com.jinfuzi.fund.jobqueue.jobstore.JobProcessorFactory;
 import com.jinfuzi.fund.jobqueue.jobstore.JobStoreConfig;
-import net.greghaines.jesque.worker.JobFactory;
 
 import java.util.Collection;
 import java.util.concurrent.Callable;
@@ -12,16 +12,16 @@ import java.util.concurrent.Callable;
 public class JobStoreWorkerFactoryImpl implements Callable<JobStoreWorkerImpl> {
     private final JobStoreConfig jobStoreConfig;
     private final Collection<String> queues;
-    private final JobFactory jobFactory;
+    private final JobProcessorFactory jobProcessorFactory;
 
-    public JobStoreWorkerFactoryImpl(JobStoreConfig jobStoreConfig, Collection<String> queues, JobFactory jobFactory) {
+    public JobStoreWorkerFactoryImpl(JobStoreConfig jobStoreConfig, Collection<String> queues, JobProcessorFactory jobProcessorFactory) {
         this.jobStoreConfig = jobStoreConfig;
         this.queues = queues;
-        this.jobFactory = jobFactory;
+        this.jobProcessorFactory = jobProcessorFactory;
     }
 
     public JobStoreWorkerImpl call() {
-        return new JobStoreWorkerImpl(this.jobStoreConfig, this.queues, this.jobFactory);
+        return new JobStoreWorkerImpl(this.jobStoreConfig, this.queues, this.jobProcessorFactory);
     }
 
 }

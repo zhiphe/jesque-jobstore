@@ -2,16 +2,11 @@ package com.jinfuzi.fund.jobqueue.worker;
 
 import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.databind.JsonMappingException;
-import com.jinfuzi.fund.jobqueue.jobstore.JobStore;
-import com.jinfuzi.fund.jobqueue.jobstore.JobStoreConfig;
-import com.jinfuzi.fund.jobqueue.jobstore.JobStoreFactory;
-import net.greghaines.jesque.Job;
-import net.greghaines.jesque.JobFailure;
-import net.greghaines.jesque.WorkerStatus;
+import com.jinfuzi.fund.jobqueue.jobstore.*;
 import net.greghaines.jesque.json.ObjectMapperFactory;
 import net.greghaines.jesque.utils.JesqueUtils;
 import net.greghaines.jesque.utils.VersionUtils;
-import net.greghaines.jesque.worker.*;
+import net.greghaines.jesque.worker.RecoveryStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import redis.clients.jedis.exceptions.JedisException;
@@ -25,7 +20,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
 import java.util.concurrent.BlockingDeque;
-import java.util.concurrent.Callable;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -33,7 +27,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static net.greghaines.jesque.utils.ResqueConstants.*;
-import static net.greghaines.jesque.worker.JobExecutor.State.*;
+import static com.jinfuzi.fund.jobqueue.worker.JobExecutor.State.*;
 import static net.greghaines.jesque.worker.WorkerEvent.*;
 
 /**
@@ -60,28 +54,28 @@ public class JobStoreWorkerImpl implements Worker {
     private final AtomicReference<ExceptionHandler> exceptionHandlerRef =
             new AtomicReference<ExceptionHandler>(new DefaultExceptionHandler());
     private final AtomicReference<FailQueueStrategy> failQueueStrategyRef;
-    private final JobFactory jobFactory;
+    private final JobProcessorFactory jobProcessorFactory;
 
     private final String threadNameBase = "Worker-" + this.workerId + " Jesque-" + VersionUtils.getVersion() + ": ";
 
 
-    public JobStoreWorkerImpl(final JobStoreConfig jobStoreConfig, final Collection<String> queues, final JobFactory jobFactory) {
-        this(jobStoreConfig, queues, jobFactory, JobStoreFactory.buildJobStore(jobStoreConfig));
+    public JobStoreWorkerImpl(final JobStoreConfig jobStoreConfig, final Collection<String> queues, final JobProcessorFactory jobProcessorFactory) {
+        this(jobStoreConfig, queues, jobProcessorFactory, JobStoreFactory.buildJobStore(jobStoreConfig));
     }
 
-    public JobStoreWorkerImpl(final JobStoreConfig jobStoreConfig, final Collection<String> queues, final JobFactory jobFactory,
+    public JobStoreWorkerImpl(final JobStoreConfig jobStoreConfig, final Collection<String> queues, final JobProcessorFactory jobProcessorFactory,
                               final JobStore jobStore) {
         if (jobStoreConfig == null) {
             throw new IllegalArgumentException("config must not be null");
         }
-        if (jobFactory == null) {
-            throw new IllegalArgumentException("jobFactory must not be null");
+        if (jobProcessorFactory == null) {
+            throw new IllegalArgumentException("jobProcessorFactory must not be null");
         }
         if (jobStore == null) {
             throw new IllegalArgumentException("jobStore must not be null");
         }
         checkQueues(queues);
-        this.jobFactory = jobFactory;
+        this.jobProcessorFactory = jobProcessorFactory;
         this.jobStore = jobStore;
         this.failQueueStrategyRef = new AtomicReference<FailQueueStrategy>(
                 new DefaultFailQueueStrategy(jobStore.getNameSpace()));
@@ -176,8 +170,8 @@ public class JobStoreWorkerImpl implements Worker {
         return this.listenerDelegate;
     }
 
-    public JobFactory getJobFactory() {
-        return this.jobFactory;
+    public JobProcessorFactory getJobProcessorFactory() {
+        return this.jobProcessorFactory;
     }
 
     public ExceptionHandler getExceptionHandler() {
@@ -270,7 +264,7 @@ public class JobStoreWorkerImpl implements Worker {
                         this.listenerDelegate.fireEvent(WORKER_POLL, this, curQueue, null, null, null, null);
                         final String payload = pop(curQueue);
                         if (payload != null) {
-                            process(ObjectMapperFactory.get().readValue(payload, Job.class), curQueue);
+                            process(JobUtils.deserializeJobInfo(payload), curQueue);
                             missCount = 0;
                         } else if (++missCount >= this.queueNames.size() && RUNNING.equals(this.state.get())) {
                             // Keeps worker from busy-spinning on empty queues
@@ -338,7 +332,7 @@ public class JobStoreWorkerImpl implements Worker {
         return RECONNECT_ATTEMPTS;
     }
 
-    protected void success(final Job job, final Object runner, final Object result, final String curQueue) {
+    protected void success(final JobInfo jobInfo, final Object runner, final Object result, final String curQueue) {
         // The job may have taken a long time; make an effort to ensure the
         // connection is OK
         this.jobStore.ensureConnection();
@@ -346,24 +340,24 @@ public class JobStoreWorkerImpl implements Worker {
             this.jobStore.increase(key(STAT, PROCESSED));
             this.jobStore.increase(key(STAT, PROCESSED, this.name));
         } catch (JedisException je) {
-            logger.warn("Error updating success stats for job=" + job, je);
+            logger.warn("Error updating success stats for job = " + jobInfo, je);
         }
-        this.listenerDelegate.fireEvent(JOB_SUCCESS, this, curQueue, job, runner, result, null);
+        this.listenerDelegate.fireEvent(JOB_SUCCESS, this, curQueue, jobInfo, runner, result, null);
     }
 
-    protected void process(final Job job, final String curQueue) {
+    protected void process(final JobInfo jobInfo, final String curQueue) {
         try {
             this.processingJob.set(true);
             if (threadNameChangingEnabled) {
                 renameThread("Processing " + curQueue + " since " + System.currentTimeMillis());
             }
-            this.listenerDelegate.fireEvent(JOB_PROCESS, this, curQueue, job, null, null, null);
-            this.jobStore.set(key(WORKER, this.name), statusMsg(curQueue, job));
-            final Object instance = this.jobFactory.materializeJob(job);
-            final Object result = execute(job, curQueue, instance);
-            success(job, instance, result, curQueue);
+            final JobProcessor jobProcessor = this.jobProcessorFactory.getJobProcessor(jobInfo.getJobType(), jobInfo.getJobJson());
+            this.listenerDelegate.fireEvent(JOB_PROCESS, this, curQueue, jobInfo, null, null, null);
+            this.jobStore.set(key(WORKER, this.name), statusMsg(curQueue, jobInfo));
+            final JobResult result = execute(jobInfo, curQueue, jobProcessor);
+            success(jobInfo, jobProcessor, result, curQueue);
         } catch (Throwable thrwbl) {
-            failure(thrwbl, job, curQueue);
+            failure(thrwbl, jobInfo, curQueue);
         } finally {
             removeInFlight(curQueue);
             this.jobStore.delete(key(WORKER, this.name));
@@ -371,49 +365,46 @@ public class JobStoreWorkerImpl implements Worker {
         }
     }
 
-    protected void failure(final Throwable thrwbl, final Job job, final String curQueue) {
+    protected void failure(final Throwable thrwbl, final JobInfo jobInfo, final String curQueue) {
         // The job may have taken a long time; make an effort to ensure the connection is OK
         this.jobStore.ensureConnection();
         try {
             this.jobStore.increase(key(STAT, FAILED));
             this.jobStore.increase(key(STAT, FAILED, this.name));
-            final String failQueueKey = this.failQueueStrategyRef.get().getFailQueueKey(thrwbl, job, curQueue);
+            final String failQueueKey = this.failQueueStrategyRef.get().getFailQueueKey(thrwbl, jobInfo, curQueue);
             if (failQueueKey != null) {
-                this.jobStore.rightPush(failQueueKey, failMsg(thrwbl, curQueue, job));
+                this.jobStore.rightPush(failQueueKey, failMsg(thrwbl, curQueue, jobInfo));
             }
         } catch (JedisException je) {
-            logger.warn("Error updating failure stats for throwable=" + thrwbl + " job=" + job, je);
+            logger.warn("Error updating failure stats for throwable=" + thrwbl + " jobInfo =" + jobInfo, je);
         } catch (IOException ioe) {
-            logger.warn("Error serializing failure payload for throwable=" + thrwbl + " job=" + job, ioe);
+            logger.warn("Error serializing failure payload for throwable=" + thrwbl + " jobInfo =" + jobInfo, ioe);
         }
-        this.listenerDelegate.fireEvent(JOB_FAILURE, this, curQueue, job, null, null, thrwbl);
+        this.listenerDelegate.fireEvent(JOB_FAILURE, this, curQueue, jobInfo, null, null, thrwbl);
     }
 
-    protected String failMsg(final Throwable thrwbl, final String queue, final Job job) throws IOException {
+    protected String failMsg(final Throwable thrwbl, final String queue, final JobInfo jobInfo) throws IOException {
         final JobFailure failure = new JobFailure();
         failure.setFailedAt(new Date());
         failure.setWorker(this.name);
         failure.setQueue(queue);
-        failure.setPayload(job);
+        failure.setJobInfo(jobInfo);
         failure.setThrowable(thrwbl);
         return ObjectMapperFactory.get().writeValueAsString(failure);
     }
-    protected Object execute(final Job job, final String curQueue, final Object instance) throws Exception {
-        if (instance instanceof WorkerAware) {
-            ((WorkerAware) instance).setWorker(this);
+
+    protected JobResult execute(final JobInfo jobInfo, final String curQueue, final JobProcessor jobProcessor) throws Exception {
+        if (jobProcessor instanceof WorkerAware) {
+            ((WorkerAware) jobProcessor).setWorker(this);
         }
-        this.listenerDelegate.fireEvent(JOB_EXECUTE, this, curQueue, job, instance, null, null);
-        final Object result;
-        if (instance instanceof Callable) {
-            result = ((Callable<?>) instance).call(); // The job is executing!
-        } else if (instance instanceof Runnable) {
-            ((Runnable) instance).run(); // The job is executing!
-            result = null;
+        this.listenerDelegate.fireEvent(JOB_EXECUTE, this, curQueue, jobInfo, jobProcessor, null, null);
+        if (jobProcessor instanceof Runnable) {
+            ((Runnable) jobProcessor).run(); // The job is executing!
         } else { // Should never happen since we're testing the class earlier
-            throw new ClassCastException("Instance must be a Runnable or a Callable: " + instance.getClass().getName()
-                    + " - " + instance);
+            throw new ClassCastException("Instance must be a Runnable or a Callable: " + jobProcessor.getClass().getName()
+                    + " - " + jobProcessor);
         }
-        return result;
+        return null;
     }
 
     protected String pop(final String curQueue) {
@@ -422,11 +413,11 @@ public class JobStoreWorkerImpl implements Worker {
                 JesqueUtils.createRecurringHashKey(key), Long.toString(System.currentTimeMillis()));
     }
 
-    protected String statusMsg(final String queue, final Job job) throws IOException {
+    protected String statusMsg(final String queue, final JobInfo jobInfo) throws IOException {
         final WorkerStatus status = new WorkerStatus();
         status.setRunAt(new Date());
         status.setQueue(queue);
-        status.setPayload(job);
+        status.setJobInfo(jobInfo);
         return ObjectMapperFactory.get().writeValueAsString(status);
     }
 

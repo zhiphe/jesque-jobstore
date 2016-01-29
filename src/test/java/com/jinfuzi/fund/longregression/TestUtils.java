@@ -1,16 +1,11 @@
 package com.jinfuzi.fund.longregression;
 
+import com.jinfuzi.fund.jobqueue.worker.JobExecutor;
 import net.greghaines.jesque.Config;
-import net.greghaines.jesque.Job;
-import net.greghaines.jesque.client.Client;
-import net.greghaines.jesque.client.ClientImpl;
-import net.greghaines.jesque.worker.JobExecutor;
 import org.junit.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import redis.clients.jedis.Jedis;
-
-import java.util.List;
 
 /**
  * Created by kevinhe on 16/1/28.
@@ -54,17 +49,6 @@ public final class TestUtils {
         return jedis;
     }
 
-    public static void enqueueJobs(final String queue, final List<Job> jobs, final Config config) {
-        final Client client = new ClientImpl(config);
-        try {
-            for (final Job job : jobs) {
-                client.enqueue(queue, job);
-            }
-        } finally {
-            client.end();
-        }
-    }
-
     public static void stopWorker(final JobExecutor worker, final Thread workerThread) {
         stopWorker(worker, workerThread, false);
     }
@@ -79,54 +63,6 @@ public final class TestUtils {
             workerThread.join();
         } catch (Exception e) {
             log.warn("Exception while waiting for workerThread to join", e);
-        }
-    }
-
-    public static void delayEnqueueJobs(final String queue, final List<Job> jobs, final Config config) {
-        final Client client = new ClientImpl(config);
-        try {
-            int i = 1;
-            for (final Job job : jobs) {
-                final long value = System.currentTimeMillis() + (500 * i++);
-                client.delayedEnqueue(queue, job, value);
-            }
-        } finally {
-            client.end();
-        }
-    }
-
-    public static void removeDelayEnqueueJobs(final String queue, final List<Job> jobs, final Config config) {
-        final Client client = new ClientImpl(config);
-        try {
-            for (final Job job : jobs) {
-                client.removeDelayedEnqueue(queue, job);
-            }
-        } finally {
-            client.end();
-        }
-    }
-
-    public static void recurringEnqueueJobs(final String queue, final List<Job> jobs, final Config config) {
-        final Client client = new ClientImpl(config);
-        try {
-            int i = 1;
-            for (final Job job : jobs) {
-                final long value = System.currentTimeMillis() + (500 * i++);
-                client.recurringEnqueue(queue, job, value, 1000);
-            }
-        } finally {
-            client.end();
-        }
-    }
-
-    public static void removeRecurringEnqueueJobs(final String queue, final List<Job> jobs, final Config config) {
-        final Client client = new ClientImpl(config);
-        try {
-            for (final Job job : jobs) {
-                client.removeRecurringEnqueue(queue, job);
-            }
-        } finally {
-            client.end();
         }
     }
 

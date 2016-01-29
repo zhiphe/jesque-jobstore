@@ -1,17 +1,9 @@
 package com.jinfuzi.fund.jobqueue.client;
 
-import com.jinfuzi.fund.jobqueue.jobstore.JobStore;
-import com.jinfuzi.fund.jobqueue.jobstore.JobStoreConfig;
-import com.jinfuzi.fund.jobqueue.jobstore.JobStoreFactory;
-import net.greghaines.jesque.Job;
-import net.greghaines.jesque.client.Client;
-import net.greghaines.jesque.json.ObjectMapperFactory;
-import net.greghaines.jesque.utils.JedisUtils;
+import com.jinfuzi.fund.jobqueue.jobstore.*;
 import net.greghaines.jesque.utils.JesqueUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import redis.clients.jedis.Jedis;
-import redis.clients.jedis.Transaction;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -71,7 +63,7 @@ public class JobStoreClientImpl implements Client {
     public void enqueue(String s, Job job) {
         validateArguments(s, job);
         try {
-            doEnqueue(s, ObjectMapperFactory.get().writeValueAsString(job));
+            doEnqueue(s, JobUtils.serializeJobInfo(job));
         } catch (RuntimeException re) {
             throw re;
         } catch (Exception e) {
@@ -206,7 +198,7 @@ public class JobStoreClientImpl implements Client {
     public void delayedEnqueue(String queue, Job job, long future) {
         validateArguments(queue, job, future);
         try {
-            doDelayedEnqueue(queue, ObjectMapperFactory.get().writeValueAsString(job), future);
+            doDelayedEnqueue(queue, JobUtils.serializeJobInfo(job), future);
         } catch (RuntimeException re) {
             throw re;
         } catch (Exception e) {
@@ -233,7 +225,7 @@ public class JobStoreClientImpl implements Client {
     public void removeDelayedEnqueue(String queue, Job job) {
         validateArguments(queue, job);
         try {
-            doRemoveDelayedEnqueue(queue, ObjectMapperFactory.get().writeValueAsString(job));
+            doRemoveDelayedEnqueue(queue, JobUtils.serializeJobInfo(job));
         } catch (RuntimeException re) {
             throw re;
         } catch (Exception e) {
@@ -259,7 +251,7 @@ public class JobStoreClientImpl implements Client {
     public void recurringEnqueue(String queue, Job job, long future, long frequency) {
         validateArguments(queue, job, future, frequency);
         try {
-            doRecurringEnqueue(queue, ObjectMapperFactory.get().writeValueAsString(job), future, frequency);
+            doRecurringEnqueue(queue, JobUtils.serializeJobInfo(job), future, frequency);
         } catch (RuntimeException re) {
             throw re;
         } catch (Exception e) {
@@ -286,7 +278,7 @@ public class JobStoreClientImpl implements Client {
     public void removeRecurringEnqueue(String queue, Job job) {
         validateArguments(queue, job);
         try {
-            doRemoveRecurringEnqueue(queue, ObjectMapperFactory.get().writeValueAsString(job));
+            doRemoveRecurringEnqueue(queue, JobUtils.serializeJobInfo(job));
         } catch (RuntimeException re) {
             throw re;
         } catch (Exception e) {
